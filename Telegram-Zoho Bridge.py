@@ -28,10 +28,64 @@ TELEGRAM_GROUP_CHAT_ID = os.getenv('TELEGRAM_GROUP_CHAT_ID')
 ZOHO_ORG_ID = os.getenv('ZOHO_ORG_ID')
 ZOHO_DEPARTMENT_ID = os.getenv('ZOHO_DEPARTMENT_ID')
 ZOHO_ACCESS_TOKEN = os.getenv('ZOHO_ACCESS_TOKEN')
+ZOHO_REFRESH_TOKEN = os.getenv('ZOHO_REFRESH_TOKEN')
+ZOHO_CLIENT_ID = os.getenv('ZOHO_CLIENT_ID')
+ZOHO_CLIENT_SECRET = os.getenv('ZOHO_CLIENT_SECRET')
 ZOHO_API_DOMAIN = os.getenv('ZOHO_API_DOMAIN', 'https://desk.zoho.com')
+
+# Store current access token in memory
+current_access_token = ZOHO_ACCESS_TOKEN
 
 # Store which messages created which tickets (simple in-memory storage)
 message_ticket_map = {}
+
+
+def refresh_zoho_token():
+    """
+    Automatically refresh the Zoho access token using refresh token
+    """
+    global current_access_token
+    
+    try:
+        if not ZOHO_REFRESH_TOKEN or not ZOHO_CLIENT_ID or not ZOHO_CLIENT_SECRET:
+            logger.error("❌ Missing refresh token or client credentials")
+            return False
+        
+        logger.info("🔄 Refreshing Zoho access token...")
+        
+        url = "https://accounts.zoho.com/oauth/v2/token"
+        data = {
+            'refresh_token': ZOHO_REFRESH_TOKEN,
+            'client_id': ZOHO_CLIENT_ID,
+            'client_secret': ZOHO_CLIENT_SECRET,
+            'grant_type': 'refresh_token'
+        }
+        
+        response = requests.post(url, data=data)
+        
+        if response.status_code == 200:
+            result = response.json()
+            current_access_token = result.get('access_token')
+            logger.info("✅ Token refreshed successfully!")
+            return True
+        else:
+            logger.error(f"❌ Failed to refresh token: {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Error refreshing token: {str(e)}")
+        return False
+
+
+def get_zoho_headers():
+    """
+    Get headers for Zoho API requests with current access token
+    """
+    return {
+        'Authorization': f'Zoho-oauthtoken {current_access_token}',
+        'orgId': ZOHO_ORG_ID,
+        'Content-Type': 'application/json'
+    }
 
 
 # ========================================
@@ -139,13 +193,17 @@ def get_or_create_contact(telegram_user):
         
         # Search for existing contact in Zoho
         search_url = f"{ZOHO_API_DOMAIN}/api/v1/contacts/search"
-        headers = {
-            'Authorization': f'Zoho-oauthtoken {ZOHO_ACCESS_TOKEN}',
-            'orgId': ZOHO_ORG_ID
-        }
+        headers = get_zoho_headers()
         params = {'email': email}
         
         response = requests.get(search_url, headers=headers, params=params)
+        
+        # If unauthorized, try refreshing token
+        if response.status_code == 401:
+            logger.warning("⚠️ Token expired, refreshing...")
+            if refresh_zoho_token():
+                headers = get_zoho_headers()
+                response = requests.get(search_url, headers=headers, params=params)
         
         # If contact exists, return their ID
         if response.status_code == 200:
@@ -166,6 +224,13 @@ def get_or_create_contact(telegram_user):
         create_url = f"{ZOHO_API_DOMAIN}/api/v1/contacts"
         response = requests.post(create_url, json=contact_data, headers=headers)
         
+        # If unauthorized, try refreshing token
+        if response.status_code == 401:
+            logger.warning("⚠️ Token expired, refreshing...")
+            if refresh_zoho_token():
+                headers = get_zoho_headers()
+                response = requests.post(create_url, json=contact_data, headers=headers)
+        
         if response.status_code == 200:
             contact_id = response.json()['id']
             logger.info(f"✅ Created new contact: {contact_id}")
@@ -185,14 +250,17 @@ def create_zoho_ticket(ticket_data):
     """
     try:
         url = f"{ZOHO_API_DOMAIN}/api/v1/tickets"
-        headers = {
-            'Authorization': f'Zoho-oauthtoken {ZOHO_ACCESS_TOKEN}',
-            'orgId': ZOHO_ORG_ID,
-            'Content-Type': 'application/json'
-        }
+        headers = get_zoho_headers()
         
         logger.info("📤 Sending ticket to Zoho Desk...")
         response = requests.post(url, json=ticket_data, headers=headers)
+        
+        # If unauthorized, try refreshing token
+        if response.status_code == 401:
+            logger.warning("⚠️ Token expired, refreshing...")
+            if refresh_zoho_token():
+                headers = get_zoho_headers()
+                response = requests.post(url, json=ticket_data, headers=headers)
         
         if response.status_code == 200:
             return response.json()

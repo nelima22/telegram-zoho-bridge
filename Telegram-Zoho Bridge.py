@@ -130,9 +130,10 @@ def get_or_create_contact(telegram_user):
     """
     try:
         # Use Telegram username or ID as a unique email identifier
+        # Using example.com (a real domain reserved for documentation/examples)
         username = telegram_user.get('username', '')
         user_id = telegram_user['id']
-        email = f"{username or user_id}@telegram.user"
+        email = f"telegram_{username or user_id}@example.com"
         
         logger.info(f"🔍 Looking for contact with email: {email}")
         
@@ -210,13 +211,19 @@ def create_zoho_ticket(ticket_data):
 # we send that reply back to Telegram
 # ========================================
 
-@app.route('/zoho-webhook', methods=['POST'])
+@app.route('/zoho-webhook', methods=['POST', 'GET'])
 def zoho_webhook():
     """
     This function runs when Zoho Desk sends us updates
     (like when an agent replies to a ticket)
     """
     try:
+        # Handle GET requests for validation
+        if request.method == 'GET':
+            logger.info("✅ Zoho webhook validation request")
+            return jsonify({'status': 'ok', 'message': 'Webhook endpoint is active'})
+        
+        # Handle POST requests with actual data
         event = request.json
         logger.info("🎫 Received update from Zoho Desk")
         
